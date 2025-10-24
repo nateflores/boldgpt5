@@ -26,6 +26,7 @@ import {DebtInFrontHelper, IDebtInFrontHelper} from "src/DebtInFrontHelper.sol";
 import "src/SortedTroves.sol";
 import "src/StabilityPool.sol";
 import "src/PriceFeeds/WETHPriceFeed.sol";
+import "src/PriceFeeds/CBBTCPriceFeed.sol";
 import "src/PriceFeeds/WSTETHPriceFeed.sol";
 import "src/PriceFeeds/RETHPriceFeed.sol";
 import "src/CollateralRegistry.sol";
@@ -69,21 +70,27 @@ contract DeployLiquity2Script is DeployGovernance, UniPriceConverter, StdCheats,
     string constant DEPLOYMENT_MODE_BOLD_ONLY = "bold-only";
     string constant DEPLOYMENT_MODE_USE_EXISTING_BOLD = "use-existing-bold";
 
-    uint256 constant NUM_BRANCHES = 3;
+    uint256 constant NUM_BRANCHES = 4;
 
     address WETH_ADDRESS = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     address USDC_ADDRESS = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+    address CBBTC_ADDRESS = 0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf;
+    address CBBTC_ADDRESS_SEPOLIA = 0xcbB7C0006F23900c38EB856149F799620fcb8A4a;
 
     // used for gas compensation and as collateral of the first branch
     // tapping disallowed
     IWETH WETH;
     IERC20Metadata USDC;
+    IERC20Metadata CBBTC;
     address WSTETH_ADDRESS = 0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0;
     address RETH_ADDRESS = 0xae78736Cd615f374D3085123A210448E74Fc6393;
     address ETH_ORACLE_ADDRESS = 0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419;
+    address CBBTC_ORACLE_ADDRESS = 0x2665701293fCbEB223D11A08D826563EDcCE423A;
+    address CBBTC_ORACLE_ADDRESS_SEPOLIA = 0x1b44F3514812d835EB1BDB0acB33d3fA3351Ee43;
     address RETH_ORACLE_ADDRESS = 0x536218f9E9Eb48863970252233c8F271f554C2d0;
     address STETH_ORACLE_ADDRESS = 0xCfE54B5cD566aB89272946F602D76Ea879CAb4a8;
     uint256 ETH_USD_STALENESS_THRESHOLD = 24 hours;
+    uint256 CBBTC_USD_STALENESS_THRESHOLD = 24 hours;
     uint256 STETH_USD_STALENESS_THRESHOLD = 24 hours;
     uint256 RETH_ETH_STALENESS_THRESHOLD = 48 hours;
 
@@ -288,10 +295,23 @@ contract DeployLiquity2Script is DeployGovernance, UniPriceConverter, StdCheats,
             return;
         }
 
+        address defaultCbBtcAddress =
+            block.chainid == 1 ? CBBTC_ADDRESS : (block.chainid == 11155111 ? CBBTC_ADDRESS_SEPOLIA : address(0));
+        address defaultCbBtcOracle =
+            block.chainid == 1 ? CBBTC_ORACLE_ADDRESS
+            : (block.chainid == 11155111 ? CBBTC_ORACLE_ADDRESS_SEPOLIA : address(0));
+
+        address cbBtcAddress = vm.envOr("CBBTC_ADDRESS", defaultCbBtcAddress);
+        address cbBtcOracle = vm.envOr("CBBTC_ORACLE_ADDRESS", defaultCbBtcOracle);
+
         if (block.chainid == 1) {
             // mainnet
             WETH = IWETH(WETH_ADDRESS);
             USDC = IERC20Metadata(USDC_ADDRESS);
+            require(cbBtcAddress != address(0), "CBBTC_ADDRESS must be configured");
+            require(cbBtcOracle != address(0), "CBBTC_ORACLE_ADDRESS must be configured");
+            CBBTC = IERC20Metadata(cbBtcAddress);
+            CBBTC_ORACLE_ADDRESS = cbBtcOracle;
             curveStableswapFactory = curveStableswapFactoryMainnet;
             uniV3Router = uniV3RouterMainnet;
             uniV3Quoter = uniV3QuoterMainnet;
@@ -306,9 +326,19 @@ contract DeployLiquity2Script is DeployGovernance, UniPriceConverter, StdCheats,
             if (block.chainid == 31337) {
                 // local
                 WETH = new WETHTester({_tapAmount: 100 ether, _tapPeriod: 1 days});
+                CBBTC = new ERC20Faucet("cbBTC", "cbBTC", 0, type(uint256).max);
+                CBBTC_ORACLE_ADDRESS = address(0);
+                useTestnetPriceFeeds = true;
             } else {
                 // sepolia
                 WETH = new WETHTester({_tapAmount: 0, _tapPeriod: type(uint256).max});
+                if (cbBtcAddress != address(0)) {
+                    CBBTC = IERC20Metadata(cbBtcAddress);
+                } else {
+                    CBBTC = new ERC20Faucet("cbBTC", "cbBTC", 0, type(uint256).max);
+                    useTestnetPriceFeeds = true;
+                }
+                CBBTC_ORACLE_ADDRESS = cbBtcOracle;
             }
             USDC = new ERC20Faucet("USDC", "USDC", 0, type(uint256).max);
             curveStableswapFactory = curveStableswapFactorySepolia;
@@ -351,12 +381,24 @@ contract DeployLiquity2Script is DeployGovernance, UniPriceConverter, StdCheats,
         // rETH (same as wstETH)
         troveManagerParamsArray[2] = troveManagerParamsArray[1];
 
-        string[] memory collNames = new string[](2);
-        string[] memory collSymbols = new string[](2);
+        // cbBTC
+        troveManagerParamsArray[3] = TroveManagerParams({
+            CCR: CCR_CBBTC,
+            MCR: MCR_CBBTC,
+            SCR: SCR_CBBTC,
+            BCR: BCR_ALL,
+            LIQUIDATION_PENALTY_SP: LIQUIDATION_PENALTY_SP_CBBTC,
+            LIQUIDATION_PENALTY_REDISTRIBUTION: LIQUIDATION_PENALTY_REDISTRIBUTION_CBBTC
+        });
+
+        string[] memory collNames = new string[](3);
+        string[] memory collSymbols = new string[](3);
         collNames[0] = "Wrapped liquid staked Ether 2.0";
         collSymbols[0] = "wstETH";
         collNames[1] = "Rocket Pool ETH";
         collSymbols[1] = "rETH";
+        collNames[2] = "Coinbase Wrapped Bitcoin";
+        collSymbols[2] = "cbBTC";
 
         DeployGovernanceParams memory deployGovernanceParams = DeployGovernanceParams({
             epochStart: epochStart,
@@ -383,6 +425,17 @@ contract DeployLiquity2Script is DeployGovernance, UniPriceConverter, StdCheats,
                     uint256 token1Amount = 1_000_000 ether;
                     _provideUniV3Liquidity(
                         ERC20Faucet(address(USDC)), ERC20Faucet(address(WETH)), token1Amount, price, UNIV3_FEE_USDC_WETH
+                    );
+                } else if (i == deployed.contractsArray.length - 1) {
+                    // cbBTC, pair against USDC
+                    (uint256 price,) = deployed.contractsArray[i].priceFeed.fetchPrice();
+                    uint256 token1Amount = 100_000 ether;
+                    _provideUniV3Liquidity(
+                        ERC20Faucet(address(USDC)),
+                        ERC20Faucet(address(deployed.contractsArray[i].collToken)),
+                        token1Amount,
+                        price,
+                        UNIV3_FEE_USDC_WETH
                     );
                 } else {
                     // LSTs, we do WETH-LST

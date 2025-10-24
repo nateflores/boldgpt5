@@ -44,6 +44,7 @@ import {ERC20Faucet} from "./ERC20Faucet.sol";
 import "src/PriceFeeds/WETHPriceFeed.sol";
 import "src/PriceFeeds/WSTETHPriceFeed.sol";
 import "src/PriceFeeds/RETHPriceFeed.sol";
+import "src/PriceFeeds/CBBTCPriceFeed.sol";
 
 import "forge-std/console2.sol";
 
@@ -193,12 +194,15 @@ contract TestDeployer is MetadataDeployment {
         address RETHOracle;
         address WSTETHToken;
         address RETHToken;
+        address CBBTCOracle;
+        address CBBTCToken;
     }
 
     struct OracleParams {
         uint256 ethUsdStalenessThreshold;
         uint256 stEthUsdStalenessThreshold;
         uint256 rEthEthStalenessThreshold;
+        uint256 cbBtcUsdStalenessThreshold;
     }
 
     // See: https://solidity-by-example.org/app/create2/
@@ -274,15 +278,17 @@ contract TestDeployer is MetadataDeployment {
     }
 
     function _nameToken(uint256 _index) internal pure returns (string memory) {
-        if (_index == 1) return "Wrapped Staked Ether";
+        if (_index == 1) return "Wrapped liquid staked Ether 2.0";
         if (_index == 2) return "Rocket Pool ETH";
-        return "LST Tester";
+        if (_index == 3) return "Coinbase Wrapped Bitcoin";
+        return "Collateral";
     }
 
     function _symboltoken(uint256 _index) internal pure returns (string memory) {
         if (_index == 1) return "wstETH";
         if (_index == 2) return "rETH";
-        return "LST";
+        if (_index == 3) return "cbBTC";
+        return "COLL";
     }
 
     function deployAndConnectContracts(TroveManagerParams[] memory troveManagerParamsArray, IWETH _WETH)
@@ -318,10 +324,10 @@ contract TestDeployer is MetadataDeployment {
         vars.troveManagers[0] = ITroveManager(troveManagerAddress);
         for (vars.i = 1; vars.i < vars.numCollaterals; vars.i++) {
             IERC20Metadata collToken = new ERC20Faucet(
-                _nameToken(vars.i), // _name
-                _symboltoken(vars.i), // _symbol
-                100 ether, //     _tapAmount
-                1 days //         _tapPeriod
+                _nameToken(vars.i),
+                _symboltoken(vars.i),
+                100 ether,
+                1 days
             );
             vars.collaterals[vars.i] = collToken;
             // Addresses registry and TM address
@@ -510,18 +516,20 @@ contract TestDeployer is MetadataDeployment {
         DeploymentVarsMainnet memory vars;
 
         result.externalAddresses.ETHOracle = 0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419;
-        result.externalAddresses.RETHOracle = 0x536218f9E9Eb48863970252233c8F271f554C2d0;
         result.externalAddresses.STETHOracle = 0xCfE54B5cD566aB89272946F602D76Ea879CAb4a8;
+        result.externalAddresses.RETHOracle = 0x536218f9E9Eb48863970252233c8F271f554C2d0;
         result.externalAddresses.WSTETHToken = 0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0;
-
         result.externalAddresses.RETHToken = 0xae78736Cd615f374D3085123A210448E74Fc6393;
+        result.externalAddresses.CBBTCOracle = 0x2665701293fCbEB223D11A08D826563EDcCE423A;
+        result.externalAddresses.CBBTCToken = 0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf;
 
         vars.oracleParams.ethUsdStalenessThreshold = _24_HOURS;
         vars.oracleParams.stEthUsdStalenessThreshold = _24_HOURS;
         vars.oracleParams.rEthEthStalenessThreshold = _48_HOURS;
+        vars.oracleParams.cbBtcUsdStalenessThreshold = _24_HOURS;
 
-        // Colls: WETH, WSTETH, RETH
-        vars.numCollaterals = 3;
+        vars.numCollaterals = _troveManagerParamsArray.length;
+        require(vars.numCollaterals <= 4, "Unsupported collateral count");
         result.contractsArray = new LiquityContracts[](vars.numCollaterals);
         result.zappersArray = new Zappers[](vars.numCollaterals);
         vars.collaterals = new IERC20Metadata[](vars.numCollaterals);
@@ -537,22 +545,33 @@ contract TestDeployer is MetadataDeployment {
 
         // WETH
         IWETH WETH = IWETH(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
-        vars.collaterals[0] = WETH;
-        (vars.addressesRegistries[0], troveManagerAddress) =
-            _deployAddressesRegistryMainnet(_troveManagerParamsArray[0]);
-        vars.troveManagers[0] = ITroveManager(troveManagerAddress);
+        if (vars.numCollaterals > 0) {
+            vars.collaterals[0] = WETH;
+            (vars.addressesRegistries[0], troveManagerAddress) =
+                _deployAddressesRegistryMainnet(_troveManagerParamsArray[0]);
+            vars.troveManagers[0] = ITroveManager(troveManagerAddress);
+        }
 
-        // RETH
-        vars.collaterals[1] = IERC20Metadata(0xae78736Cd615f374D3085123A210448E74Fc6393);
-        (vars.addressesRegistries[1], troveManagerAddress) =
-            _deployAddressesRegistryMainnet(_troveManagerParamsArray[1]);
-        vars.troveManagers[1] = ITroveManager(troveManagerAddress);
+        if (vars.numCollaterals > 1) {
+            vars.collaterals[1] = IERC20Metadata(result.externalAddresses.WSTETHToken);
+            (vars.addressesRegistries[1], troveManagerAddress) =
+                _deployAddressesRegistryMainnet(_troveManagerParamsArray[1]);
+            vars.troveManagers[1] = ITroveManager(troveManagerAddress);
+        }
 
-        // WSTETH
-        vars.collaterals[2] = IERC20Metadata(0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0);
-        (vars.addressesRegistries[2], troveManagerAddress) =
-            _deployAddressesRegistryMainnet(_troveManagerParamsArray[2]);
-        vars.troveManagers[2] = ITroveManager(troveManagerAddress);
+        if (vars.numCollaterals > 2) {
+            vars.collaterals[2] = IERC20Metadata(result.externalAddresses.RETHToken);
+            (vars.addressesRegistries[2], troveManagerAddress) =
+                _deployAddressesRegistryMainnet(_troveManagerParamsArray[2]);
+            vars.troveManagers[2] = ITroveManager(troveManagerAddress);
+        }
+
+        if (vars.numCollaterals > 3) {
+            vars.collaterals[3] = IERC20Metadata(result.externalAddresses.CBBTCToken);
+            (vars.addressesRegistries[3], troveManagerAddress) =
+                _deployAddressesRegistryMainnet(_troveManagerParamsArray[3]);
+            vars.troveManagers[3] = ITroveManager(troveManagerAddress);
+        }
 
         // Deploy registry and register the TMs
         result.collateralRegistry = new CollateralRegistryTester(result.boldToken, vars.collaterals, vars.troveManagers);
@@ -721,15 +740,22 @@ contract TestDeployer is MetadataDeployment {
         OracleParams memory _oracleParams,
         address _borrowerOperationsAddress
     ) internal returns (IPriceFeed) {
-        //assert(_branch < vars.numCollaterals);
-        // Price feeds
-        // ETH
         if (_branch == 0) {
             return new WETHPriceFeed(
                 _externalAddresses.ETHOracle, _oracleParams.ethUsdStalenessThreshold, _borrowerOperationsAddress
             );
-        } else if (_branch == 1) {
-            // RETH
+        }
+        if (_branch == 1) {
+            return new WSTETHPriceFeed(
+                _externalAddresses.ETHOracle,
+                _externalAddresses.STETHOracle,
+                _externalAddresses.WSTETHToken,
+                _oracleParams.ethUsdStalenessThreshold,
+                _oracleParams.stEthUsdStalenessThreshold,
+                _borrowerOperationsAddress
+            );
+        }
+        if (_branch == 2) {
             return new RETHPriceFeed(
                 _externalAddresses.ETHOracle,
                 _externalAddresses.RETHOracle,
@@ -739,15 +765,9 @@ contract TestDeployer is MetadataDeployment {
                 _borrowerOperationsAddress
             );
         }
-
-        // wstETH
-        return new WSTETHPriceFeed(
-            _externalAddresses.ETHOracle,
-            _externalAddresses.STETHOracle,
-            _externalAddresses.WSTETHToken,
-            _oracleParams.ethUsdStalenessThreshold,
-            _oracleParams.stEthUsdStalenessThreshold,
-            _borrowerOperationsAddress
+        // cbBTC
+        return new CBBTCPriceFeed(
+            _externalAddresses.CBBTCOracle, _oracleParams.cbBtcUsdStalenessThreshold, _borrowerOperationsAddress
         );
     }
 

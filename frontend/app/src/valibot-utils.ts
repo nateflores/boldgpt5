@@ -271,6 +271,7 @@ export function vCollateralSymbol() {
     v.literal("ETH"),
     v.literal("RETH"),
     v.literal("WSTETH"),
+    v.literal("CBBTC"),
   ]);
 }
 

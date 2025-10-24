@@ -32,6 +32,7 @@ export const CollateralSymbolSchema = v.union([
   v.literal("ETH"),
   v.literal("RETH"),
   v.literal("WSTETH"),
+  v.literal("CBBTC"),
 ]);
 
 function isCollateralSymbol(value: unknown) {
